@@ -3,8 +3,14 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "tsup": {
+    "entry": ["src/server.ts"],
+    "splitting": false,
+    "sourcemap": true,
+    "clean": true
+  },
   "scripts": {
-    "build": "tsc",
+    "build": "tsup",
     "start": "node dist/server.js",
     "dev": "tsx src/server.ts",
     "prod": "pnpm run build && pnpm start",
@@ -29,6 +35,8 @@
     "@types/express": "^5.0.2",
     "@types/node": "^22.15.27",
     "@types/nodemailer": "^6.4.17",
+    "tsconfig-paths": "^4.2.0",
+    "tsup": "^8.5.0",
     "tsx": "^4.19.4"
   }
 }

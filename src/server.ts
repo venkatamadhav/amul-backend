@@ -7,6 +7,7 @@ import { fetchAndUpdateProducts } from '@/services/productService';
 import productRoutes from '@/routes/productRoutes';
 import subscriptionRoutes from '@/routes/subscriptionRoutes';
 import healthRoutes from '@/routes/healthRoutes';
+import testEmailRoutes from '@/routes/testEmailRoutes';
 
 dotenv.config();
 
@@ -19,6 +20,7 @@ app.use(express.json());
 app.use(express.static('public'));
 
 // Routes
+app.use('/api', testEmailRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api', subscriptionRoutes);
 app.use('/', healthRoutes);

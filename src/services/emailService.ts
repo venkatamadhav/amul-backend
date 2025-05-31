@@ -1,6 +1,7 @@
 import { transporter } from '@/config/email';
 import { Subscription } from '@/models/Subscription';
 import { IProduct, AmulProductData } from '@/types';
+import { Product } from '@/models/Product';
 
 export const notifySubscribers = async (product: IProduct, updatedProductData: AmulProductData): Promise<void> => {
   try {
@@ -8,6 +9,7 @@ export const notifySubscribers = async (product: IProduct, updatedProductData: A
       productId: product.productId, 
       isActive: true 
     });
+    console.log("Notifying subscribers for product: ", product.name, "to email: ", subscriptions.map(sub => sub.email));
     
     if (subscriptions.length === 0) {
       console.log(`No active subscriptions found for product: ${product.name}`);
@@ -174,4 +176,25 @@ const generateEmailHTML = (product: IProduct, productUrl: string, quantity: numb
     </body>
     </html>
   `;
+};
+
+export const fakeNotify = async (email: string, productId: string): Promise<void> => {
+  try {
+    const product = await Product.findOne({ productId });
+    if (!product) {
+      console.error(`Product with ID ${productId} not found.`);
+      return;
+    }
+    const productUrl = `https://shop.amul.com/en/product/${product.alias}`;
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: `🎉 ${product.name} is Back in Stock!`,
+      html: generateEmailHTML(product, productUrl, product.inventoryQuantity)
+    };
+    await transporter.sendMail(mailOptions);
+    console.log(`📧 Test notification sent to ${email} for product ${product.name}`);
+  } catch (error) {
+    console.error('❌ Error sending test notification:', error instanceof Error ? error.message : 'Unknown error');
+  }
 };

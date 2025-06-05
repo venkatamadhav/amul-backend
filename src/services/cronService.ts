@@ -3,14 +3,23 @@ import { fetchAndUpdateProducts } from './productService';
 
 export const startCronJobs = (): void => {
   // Check inventory every 5 minutes
-  cron.schedule('*/5 * * * *', async () => {
+  // cron.schedule('*/5 * * * *', async () => {
+  //   console.log('⏰ Running scheduled inventory check...');
+  //   try {
+  //     await fetchAndUpdateProducts();
+  //   } catch (error) {
+  //     console.error('❌ Scheduled inventory check failed:', error);
+  //   }
+  // });
+
+  setInterval(async () => {
     console.log('⏰ Running scheduled inventory check...');
     try {
       await fetchAndUpdateProducts();
     } catch (error) {
       console.error('❌ Scheduled inventory check failed:', error);
     }
-  });
+  }, 60000);
   
   console.log('✅ Cron jobs started successfully');
 };

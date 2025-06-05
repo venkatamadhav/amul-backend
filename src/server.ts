@@ -8,6 +8,7 @@ import productRoutes from '@/routes/productRoutes';
 import subscriptionRoutes from '@/routes/subscriptionRoutes';
 import healthRoutes from '@/routes/healthRoutes';
 import testEmailRoutes from '@/routes/testEmailRoutes';
+import telegramRoutes from './routes/telegramRoutes';
 
 dotenv.config();
 
@@ -23,6 +24,7 @@ app.use(express.static('public'));
 app.use('/api', testEmailRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api', subscriptionRoutes);
+app.use('/api/telegram', telegramRoutes);
 app.use('/', healthRoutes);
 
 // Serve the frontend

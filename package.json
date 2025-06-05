@@ -14,7 +14,8 @@
     "start": "node dist/server.js",
     "dev": "tsx src/server.ts",
     "prod": "pnpm run build && pnpm start",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "migrate-telegram-username": "tsx src/scripts/migrate-telegram-username.ts"
   },
   "keywords": [],
   "author": "",

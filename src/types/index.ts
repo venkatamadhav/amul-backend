@@ -15,6 +15,7 @@ export interface IProduct extends Document {
 export interface ISubscription extends Document {
   email: string;
   productId: string;
+  telegramUsername?: string; // Optional telegram username
   subscribedAt: Date;
   isActive: boolean;
 }
@@ -32,11 +33,13 @@ export interface AmulProductData {
 export interface SubscribeRequest {
   email: string;
   productId: string;
+  telegramUsername?: string; // Optional telegram username
 }
 
 export interface UnsubscribeRequest {
   email: string;
   productId: string;
+  telegramUsername?: string; // Optional telegram username
 }
 
 export interface SubscriptionWithProduct extends ISubscription {

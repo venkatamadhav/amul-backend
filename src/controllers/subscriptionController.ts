@@ -5,7 +5,7 @@ import { SubscribeRequest, UnsubscribeRequest, ApiResponse, SubscriptionWithProd
 
 export const subscribeToProduct = async (req: Request<{}, {}, SubscribeRequest>, res: Response): Promise<void> => {
   try {
-    const { email, productId } = req.body;
+    const { email, productId, telegramUsername } = req.body;
     
     if (!email || !productId) {
       const response: ApiResponse = {
@@ -26,6 +26,20 @@ export const subscribeToProduct = async (req: Request<{}, {}, SubscribeRequest>,
       res.status(400).json(response);
       return;
     }
+
+    // Validate telegram username format if provided
+    if (telegramUsername) {
+      const telegramRegex = /^[a-zA-Z0-9_]{5,32}$/;
+      const cleanUsername = telegramUsername.replace('@', ''); // Remove @ if present
+      if (!telegramRegex.test(cleanUsername)) {
+        const response: ApiResponse = {
+          success: false,
+          error: 'Invalid Telegram username format (5-32 characters, letters, numbers, underscores only)'
+        };
+        res.status(400).json(response);
+        return;
+      }
+    }
     
     // Check if product exists
     const product = await Product.findOne({ productId });
@@ -42,6 +56,12 @@ export const subscribeToProduct = async (req: Request<{}, {}, SubscribeRequest>,
     const existingSubscription = await Subscription.findOne({ email, productId });
     if (existingSubscription) {
       if (existingSubscription.isActive) {
+        // Update telegram username if provided
+        if (telegramUsername) {
+          existingSubscription.telegramUsername = telegramUsername.replace('@', '');
+          await existingSubscription.save();
+        }
+        
         const response: ApiResponse = {
           success: false,
           error: 'Already subscribed to this product'
@@ -49,8 +69,11 @@ export const subscribeToProduct = async (req: Request<{}, {}, SubscribeRequest>,
         res.status(400).json(response);
         return;
       } else {
-        // Reactivate subscription
+        // Reactivate subscription and update telegram username
         existingSubscription.isActive = true;
+        if (telegramUsername) {
+          existingSubscription.telegramUsername = telegramUsername.replace('@', '');
+        }
         await existingSubscription.save();
         
         const response: ApiResponse = {
@@ -63,7 +86,16 @@ export const subscribeToProduct = async (req: Request<{}, {}, SubscribeRequest>,
     }
     
     // Create new subscription
-    const subscription = new Subscription({ email, productId });
+    const subscriptionData: any = { 
+      email, 
+      productId 
+    };
+    
+    if (telegramUsername) {
+      subscriptionData.telegramUsername = telegramUsername.replace('@', '');
+    }
+    
+    const subscription = new Subscription(subscriptionData);
     await subscription.save();
     
     const response: ApiResponse = {

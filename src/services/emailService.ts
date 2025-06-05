@@ -2,6 +2,7 @@ import { transporter } from '@/config/email';
 import { Subscription } from '@/models/Subscription';
 import { IProduct, AmulProductData } from '@/types';
 import { Product } from '@/models/Product';
+import { telegramService } from '@/services/telegramService';
 
 export const notifySubscribers = async (product: IProduct, updatedProductData: AmulProductData): Promise<void> => {
   try {
@@ -9,7 +10,8 @@ export const notifySubscribers = async (product: IProduct, updatedProductData: A
       productId: product.productId, 
       isActive: true 
     });
-    console.log("Notifying subscribers for product: ", product.name, "to email: ", subscriptions.map(sub => sub.email));
+    
+    console.log(`Notifying ${subscriptions.length} subscribers for product: ${product.name}`);
     
     if (subscriptions.length === 0) {
       console.log(`No active subscriptions found for product: ${product.name}`);
@@ -18,7 +20,11 @@ export const notifySubscribers = async (product: IProduct, updatedProductData: A
     
     const productUrl = `https://shop.amul.com/en/product/${product.alias}`;
     
-    const emailPromises = subscriptions.map(async (subscription) => {
+    // Send both email and telegram notifications
+    const notificationPromises = subscriptions.map(async (subscription) => {
+      const promises: Promise<any>[] = [];
+      
+      // Always send email
       const mailOptions = {
         from: process.env.EMAIL_USER,
         to: subscription.email,
@@ -26,15 +32,36 @@ export const notifySubscribers = async (product: IProduct, updatedProductData: A
         html: generateEmailHTML(product, productUrl, updatedProductData.inventory_quantity)
       };
       
-      try {
-        await transporter.sendMail(mailOptions);
-        console.log(`📧 Notification sent to ${subscription.email} for product ${product.name}`);
-      } catch (emailError) {
-        console.error(`❌ Failed to send email to ${subscription.email}:`, emailError);
+      promises.push(
+        transporter.sendMail(mailOptions)
+          .then(() => {
+            console.log(`📧 Email notification sent to ${subscription.email} for product ${product.name}`);
+          })
+          .catch((emailError) => {
+            console.error(`❌ Failed to send email to ${subscription.email}:`, emailError);
+          })
+      );
+      
+      // Send telegram notification if username is provided
+      if (subscription.telegramUsername) {
+        promises.push(
+          telegramService.sendProductNotification(subscription.telegramUsername, product, updatedProductData.inventory_quantity)
+            .then((success) => {
+              if (!success) {
+                console.log(`💡 Tip: User @${subscription.telegramUsername} should start a conversation with the bot to receive notifications`);
+              }
+            })
+            .catch((telegramError) => {
+              console.error(`❌ Failed to send Telegram message to @${subscription.telegramUsername}:`, telegramError);
+            })
+        );
       }
+      
+      return Promise.allSettled(promises);
     });
     
-    await Promise.allSettled(emailPromises);
+    await Promise.allSettled(notificationPromises);
+    console.log(`✅ Finished processing notifications for product: ${product.name}`);
   } catch (error) {
     console.error('❌ Error sending notifications:', error instanceof Error ? error.message : 'Unknown error');
   }
@@ -178,22 +205,42 @@ const generateEmailHTML = (product: IProduct, productUrl: string, quantity: numb
   `;
 };
 
-export const fakeNotify = async (email: string, productId: string): Promise<void> => {
+export const fakeNotify = async (email: string, productId: string, telegramUsername?: string): Promise<void> => {
   try {
     const product = await Product.findOne({ productId });
     if (!product) {
       console.error(`Product with ID ${productId} not found.`);
       return;
     }
+    
     const productUrl = `https://shop.amul.com/en/product/${product.alias}`;
+    
+    // Send email notification
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: email,
       subject: `🎉 ${product.name} is Back in Stock!`,
       html: generateEmailHTML(product, productUrl, product.inventoryQuantity)
     };
-    await transporter.sendMail(mailOptions);
-    console.log(`📧 Test notification sent to ${email} for product ${product.name}`);
+    
+    try {
+      await transporter.sendMail(mailOptions);
+      console.log(`📧 Test email notification sent to ${email} for product ${product.name}`);
+    } catch (emailError) {
+      console.error(`❌ Failed to send test email to ${email}:`, emailError);
+    }
+    
+    // Send telegram notification if username provided
+    if (telegramUsername) {
+      try {
+        const success = await telegramService.sendTestMessage(telegramUsername, product);
+        if (!success) {
+          console.log(`💡 Tip: User @${telegramUsername} should start a conversation with the bot to receive notifications`);
+        }
+      } catch (telegramError) {
+        console.error(`❌ Failed to send test Telegram message to @${telegramUsername}:`, telegramError);
+      }
+    }
   } catch (error) {
     console.error('❌ Error sending test notification:', error instanceof Error ? error.message : 'Unknown error');
   }

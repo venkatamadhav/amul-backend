@@ -1,6 +1,12 @@
 // services/telegramService.ts
 import axios from 'axios';
 import { IProduct } from '@/types';
+import TelegramBot from 'node-telegram-bot-api';
+import { Product } from '@/models/Product';
+import { Subscription } from '@/models/Subscription';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 interface TelegramUser {
   id: number;
@@ -25,6 +31,542 @@ interface TelegramUpdate {
     text: string;
   };
 }
+
+const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN || '', { polling: true });
+
+// Store user email addresses temporarily
+const userEmails = new Map<number, string>();
+// Store pending subscriptions
+const pendingSubscriptions = new Map<number, string>();
+
+// Command handlers
+bot.onText(/\/start/, async (msg) => {
+  const chatId = msg.chat.id;
+  await bot.sendMessage(chatId, 
+    '👋 Welcome to Amul Product Notifier!\n\n' +
+    'Available commands:\n' +
+    '/setemail - Set your email for notifications\n' +
+    '/products - Browse and subscribe to products\n' +
+    '/mysubscriptions - View your subscriptions\n' +
+    '/unsubscribeall - Unsubscribe from all products\n' +
+    '/help - Show this help message'
+  );
+});
+
+bot.onText(/\/help/, async (msg) => {
+  const chatId = msg.chat.id;
+  await bot.sendMessage(chatId, 
+    '📋 Available commands:\n\n' +
+    '/setemail - Set your email for notifications\n' +
+    '/products - Browse and subscribe to products\n' +
+    '/mysubscriptions - View your subscriptions\n' +
+    '/unsubscribeall - Unsubscribe from all products\n' +
+    '/help - Show this help message'
+  );
+});
+
+bot.onText(/\/setemail/, async (msg) => {
+  const chatId = msg.chat.id;
+  await bot.sendMessage(chatId, 'Please enter your email address:');
+  userEmails.set(chatId, 'waiting');
+});
+
+bot.onText(/\/products/, async (msg) => {
+  const chatId = msg.chat.id;
+  const email = userEmails.get(chatId);
+
+  if (!email || email === 'waiting') {
+    await bot.sendMessage(chatId, '❌ Please set your email first using /setemail');
+    return;
+  }
+
+  try {
+    const products = await Product.find({});
+    if (products.length === 0) {
+      await bot.sendMessage(chatId, 'No products available at the moment.');
+      return;
+    }
+
+    // Create inline keyboard buttons for products
+    const keyboard = products.map(product => [{
+      text: `${product.name} - ₹${product.price} ${product.inventoryQuantity > 0 ? '🟢' : '🔴'}`,
+      callback_data: `product_${product.productId}`
+    }]);
+
+    await bot.sendMessage(chatId, 
+      '📋 Available Products:\n' +
+      '🟢 - In Stock\n' +
+      '🔴 - Out of Stock\n\n' +
+      'Click on a product to view details and subscribe.',
+      {
+        reply_markup: {
+          inline_keyboard: keyboard
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error fetching products:', error);
+    await bot.sendMessage(chatId, '❌ Error fetching products. Please try again later.');
+  }
+});
+
+// Handle callback queries (button clicks)
+bot.on('callback_query', async (callbackQuery) => {
+  const chatId = callbackQuery.message?.chat.id;
+  const data = callbackQuery.data;
+  
+  if (!chatId || !data) return;
+
+  if (data.startsWith('product_')) {
+    const productId = data.replace('product_', '');
+    const email = userEmails.get(chatId);
+
+    if (!email || email === 'waiting') {
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '❌ Please set your email first using /setemail',
+        show_alert: true
+      });
+      return;
+    }
+
+    try {
+      const product = await Product.findOne({ productId });
+      if (!product) {
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: '❌ Product not found',
+          show_alert: true
+        });
+        return;
+      }
+
+      const productUrl = `https://shop.amul.com/en/product/${product.alias}`;
+      const existingSubscription = await Subscription.findOne({
+        email,
+        productId,
+        isActive: true
+      });
+
+      if (product.inventoryQuantity > 0) {
+        // Product is in stock - show direct link
+        const keyboard = [[{
+          text: '🛒 Buy Now',
+          url: productUrl
+        } as TelegramBot.InlineKeyboardButton]];
+
+        if (!existingSubscription) {
+          keyboard.push([{
+            text: '🔔 Subscribe for Stock Updates',
+            callback_data: `subscribe_${productId}`
+          } as TelegramBot.InlineKeyboardButton]);
+        }
+
+        await bot.editMessageText(
+          `📦 <b>${product.name}</b>\n\n` +
+          `💰 Price: ₹${product.price}\n` +
+          `📊 Stock: ${product.inventoryQuantity} units\n` +
+          `\n${existingSubscription ? '✅ You are subscribed to this product' : 'Click below to subscribe for stock updates'}`,
+          {
+            chat_id: chatId,
+            message_id: callbackQuery.message?.message_id,
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: keyboard
+            }
+          }
+        );
+      } else {
+        // Product is out of stock - show subscription option
+        const keyboard = [[{
+          text: existingSubscription ? '✅ Subscribed' : '🔔 Subscribe for Stock Updates',
+          callback_data: `subscribe_${productId}`
+        }]];
+
+        await bot.editMessageText(
+          `📦 <b>${product.name}</b>\n\n` +
+          `💰 Price: ₹${product.price}\n` +
+          `📊 Stock: Out of Stock\n` +
+          `\n${existingSubscription ? '✅ You are subscribed to this product' : 'Click below to subscribe for stock updates'}`,
+          {
+            chat_id: chatId,
+            message_id: callbackQuery.message?.message_id,
+            parse_mode: 'HTML',
+            reply_markup: {
+              inline_keyboard: keyboard
+            }
+          }
+        );
+      }
+    } catch (error) {
+      console.error('Error handling product selection:', error);
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '❌ Error processing request. Please try again later.',
+        show_alert: true
+      });
+    }
+  } else if (data.startsWith('subscribe_')) {
+    const productId = data.replace('subscribe_', '');
+    const email = userEmails.get(chatId);
+
+    try {
+      const product = await Product.findOne({ productId });
+      if (!product) {
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: '❌ Product not found',
+          show_alert: true
+        });
+        return;
+      }
+
+      const existingSubscription = await Subscription.findOne({
+        email,
+        productId,
+        isActive: true
+      });
+
+      if (existingSubscription) {
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: '✅ You are already subscribed to this product!',
+          show_alert: true
+        });
+        return;
+      }
+
+      await Subscription.create({
+        email,
+        productId,
+        telegramUsername: callbackQuery.from.username,
+        isActive: true
+      });
+
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: `✅ Successfully subscribed to ${product.name}!`,
+        show_alert: true
+      });
+
+      // Update the message to show subscription status
+      const message = callbackQuery.message;
+      if (message && message.reply_markup?.inline_keyboard) {
+        const keyboard = message.reply_markup.inline_keyboard.map(row =>
+          row.map(button => {
+            if (button.callback_data === `subscribe_${productId}`) {
+              return {
+                ...button,
+                text: '✅ Subscribed'
+              };
+            }
+            return button;
+          })
+        );
+
+        await bot.editMessageReplyMarkup(
+          { inline_keyboard: keyboard },
+          {
+            chat_id: chatId,
+            message_id: message.message_id
+          }
+        );
+      }
+    } catch (error) {
+      console.error('Error subscribing to product:', error);
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '❌ Error subscribing to product. Please try again later.',
+        show_alert: true
+      });
+    }
+  } else if (data.startsWith('unsubscribe_')) {
+    const productId = data.replace('unsubscribe_', '');
+    const email = userEmails.get(chatId);
+
+    if (!email || email === 'waiting') {
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '❌ Please set your email first using /setemail',
+        show_alert: true
+      });
+      return;
+    }
+
+    try {
+      const product = await Product.findOne({ productId });
+      if (!product) {
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: '❌ Product not found',
+          show_alert: true
+        });
+        return;
+      }
+
+      const result = await Subscription.updateOne(
+        { email, productId, isActive: true },
+        { $set: { isActive: false } }
+      );
+
+      if (result.modifiedCount === 0) {
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: '❌ No active subscription found for this product.',
+          show_alert: true
+        });
+        return;
+      }
+
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: `✅ Successfully unsubscribed from ${product.name}!`,
+        show_alert: true
+      });
+
+      // Update the message to remove the unsubscribed product
+      const message = callbackQuery.message;
+      if (message && message.reply_markup?.inline_keyboard) {
+        const keyboard = message.reply_markup.inline_keyboard.filter(row => 
+          !row[0].callback_data?.includes(`unsubscribe_${productId}`)
+        );
+
+        // If no subscriptions left, remove the unsubscribe all button
+        if (keyboard.length === 1 && keyboard[0][0].callback_data === 'unsubscribe_all') {
+          await bot.editMessageText(
+            'You have no active subscriptions.',
+            {
+              chat_id: chatId,
+              message_id: message.message_id
+            }
+          );
+        } else {
+          // Remove the product from the list
+          const productText = `📦 <b>${product.name}</b>\n` +
+                            `💰 Price: ₹${product.price}\n` +
+                            `📊 Stock: ${product.inventoryQuantity > 0 ? 'In Stock' : 'Out of Stock'}\n` +
+                            `🔗 <a href="https://shop.amul.com/en/product/${product.alias}">View Product</a>`;
+          
+          const newText = message.text?.replace(productText + '\n\n', '') || '';
+          
+          await bot.editMessageText(
+            newText,
+            {
+              chat_id: chatId,
+              message_id: message.message_id,
+              parse_mode: 'HTML',
+              disable_web_page_preview: true,
+              reply_markup: {
+                inline_keyboard: keyboard
+              }
+            }
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Error unsubscribing from product:', error);
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '❌ Error unsubscribing from product. Please try again later.',
+        show_alert: true
+      });
+    }
+  } else if (data === 'unsubscribe_all') {
+    const email = userEmails.get(chatId);
+
+    if (!email || email === 'waiting') {
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '❌ Please set your email first using /setemail',
+        show_alert: true
+      });
+      return;
+    }
+
+    try {
+      const result = await Subscription.updateMany(
+        { email, isActive: true },
+        { $set: { isActive: false } }
+      );
+
+      if (result.modifiedCount === 0) {
+        await bot.answerCallbackQuery(callbackQuery.id, {
+          text: 'You have no active subscriptions to unsubscribe from.',
+          show_alert: true
+        });
+        return;
+      }
+
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '✅ Successfully unsubscribed from all products!',
+        show_alert: true
+      });
+
+      // Update the message to show no subscriptions
+      const message = callbackQuery.message;
+      if (message) {
+        await bot.editMessageText(
+          'You have no active subscriptions.',
+          {
+            chat_id: chatId,
+            message_id: message.message_id
+          }
+        );
+      }
+    } catch (error) {
+      console.error('Error unsubscribing from all products:', error);
+      await bot.answerCallbackQuery(callbackQuery.id, {
+        text: '❌ Error unsubscribing from products. Please try again later.',
+        show_alert: true
+      });
+    }
+  }
+});
+
+bot.onText(/\/mysubscriptions/, async (msg) => {
+  const chatId = msg.chat.id;
+  const email = userEmails.get(chatId);
+
+  if (!email || email === 'waiting') {
+    await bot.sendMessage(chatId, '❌ Please set your email first using /setemail');
+    return;
+  }
+
+  try {
+    const subscriptions = await Subscription.find({
+      email,
+      isActive: true
+    });
+
+    if (subscriptions.length === 0) {
+      await bot.sendMessage(chatId, 'You have no active subscriptions.');
+      return;
+    }
+
+    // Get all product details in one query
+    const productIds = subscriptions.map(sub => sub.productId);
+    const products = await Product.find({ productId: { $in: productIds } });
+    
+    // Create a map for quick product lookup
+    const productMap = new Map(products.map(p => [p.productId, p]));
+
+    const subscriptionList = subscriptions.map(sub => {
+      const product = productMap.get(sub.productId);
+      if (!product) return null;
+
+      return `📦 <b>${product.name}</b>\n` +
+             `💰 Price: ₹${product.price}\n` +
+             `📊 Stock: ${product.inventoryQuantity > 0 ? 'In Stock' : 'Out of Stock'}\n` +
+             `🔗 <a href="https://shop.amul.com/en/product/${product.alias}">View Product</a>`;
+    }).filter(Boolean).join('\n\n');
+
+    // Create inline keyboard with unsubscribe buttons
+    const keyboard = subscriptions
+      .map(sub => {
+        const product = productMap.get(sub.productId);
+        if (!product) return null;
+        return [{
+          text: `❌ Unsubscribe from ${product.name}`,
+          callback_data: `unsubscribe_${sub.productId}`
+        } as TelegramBot.InlineKeyboardButton];
+      })
+      .filter((row): row is TelegramBot.InlineKeyboardButton[] => row !== null);
+
+    // Add unsubscribe all button
+    keyboard.push([{
+      text: '❌ Unsubscribe from All Products',
+      callback_data: 'unsubscribe_all'
+    } as TelegramBot.InlineKeyboardButton]);
+
+    await bot.sendMessage(chatId, 
+      '📋 Your Active Subscriptions:\n\n' + subscriptionList,
+      { 
+        parse_mode: 'HTML', 
+        disable_web_page_preview: true,
+        reply_markup: {
+          inline_keyboard: keyboard
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error fetching subscriptions:', error);
+    await bot.sendMessage(chatId, '❌ Error fetching subscriptions. Please try again later.');
+  }
+});
+
+bot.onText(/\/unsubscribe (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const productId = match?.[1];
+  const email = userEmails.get(chatId);
+
+  if (!email || email === 'waiting') {
+    await bot.sendMessage(chatId, '❌ Please set your email first using /setemail');
+    return;
+  }
+
+  if (!productId) {
+    await bot.sendMessage(chatId, '❌ Please provide a product ID. Usage: /unsubscribe <product_id>');
+    return;
+  }
+
+  try {
+    const result = await Subscription.updateOne(
+      { email, productId, isActive: true },
+      { $set: { isActive: false } }
+    );
+
+    if (result.modifiedCount === 0) {
+      await bot.sendMessage(chatId, '❌ No active subscription found for this product.');
+      return;
+    }
+
+    const product = await Product.findOne({ productId });
+    await bot.sendMessage(chatId, 
+      `✅ Successfully unsubscribed from ${product?.name || 'the product'}!`
+    );
+  } catch (error) {
+    console.error('Error unsubscribing from product:', error);
+    await bot.sendMessage(chatId, '❌ Error unsubscribing from product. Please try again later.');
+  }
+});
+
+bot.onText(/\/unsubscribeall/, async (msg) => {
+  const chatId = msg.chat.id;
+  const email = userEmails.get(chatId);
+
+  if (!email || email === 'waiting') {
+    await bot.sendMessage(chatId, '❌ Please set your email first using /setemail');
+    return;
+  }
+
+  try {
+    const result = await Subscription.updateMany(
+      { email, isActive: true },
+      { $set: { isActive: false } }
+    );
+
+    if (result.modifiedCount === 0) {
+      await bot.sendMessage(chatId, 'You have no active subscriptions to unsubscribe from.');
+      return;
+    }
+
+    await bot.sendMessage(chatId, 
+      `✅ Successfully unsubscribed from all products!`
+    );
+  } catch (error) {
+    console.error('Error unsubscribing from all products:', error);
+    await bot.sendMessage(chatId, '❌ Error unsubscribing from products. Please try again later.');
+  }
+});
+
+// Handle email input
+bot.on('message', async (msg) => {
+  const chatId = msg.chat.id;
+  const email = userEmails.get(chatId);
+
+  if (email === 'waiting') {
+    const newEmail = msg.text;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!emailRegex.test(newEmail || '')) {
+      await bot.sendMessage(chatId, '❌ Invalid email format. Please try again:');
+      return;
+    }
+
+    userEmails.set(chatId, newEmail || '');
+    await bot.sendMessage(chatId, 
+      `✅ Email set successfully: ${newEmail}\n` +
+      'You can now use /products to view available products and subscribe to them.'
+    );
+  }
+});
 
 class TelegramService {
   private botToken: string;
@@ -147,3 +689,38 @@ Happy Shopping! 🛍️
 }
 
 export const telegramService = new TelegramService();
+
+// Export the bot instance and send functions
+export const telegramServiceBot = {
+  bot,
+  sendProductNotification: async (username: string, product: any, quantity: number): Promise<boolean> => {
+    try {
+      const message = 
+        `🎉 ${product.name} is Back in Stock!\n\n` +
+        `💰 Price: ₹${product.price}\n` +
+        `📦 Available Quantity: ${quantity}\n` +
+        `🔗 https://shop.amul.com/en/product/${product.alias}`;
+
+      await bot.sendMessage(username, message);
+      return true;
+    } catch (error) {
+      console.error('Error sending Telegram notification:', error);
+      return false;
+    }
+  },
+  sendTestMessage: async (username: string, product: any): Promise<boolean> => {
+    try {
+      const message = 
+        `🧪 Test Notification\n\n` +
+        `📦 Product: ${product.name}\n` +
+        `💰 Price: ₹${product.price}\n` +
+        `🔗 https://shop.amul.com/en/product/${product.alias}`;
+
+      await bot.sendMessage(username, message);
+      return true;
+    } catch (error) {
+      console.error('Error sending test Telegram message:', error);
+      return false;
+    }
+  }
+};

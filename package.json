@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "tsup": {
-    "entry": ["src/server.ts"],
+    "entry": [
+      "src/server.ts"
+    ],
     "splitting": false,
     "sourcemap": true,
     "clean": true
@@ -15,7 +17,9 @@
     "dev": "tsx src/server.ts",
     "prod": "pnpm run build && pnpm start",
     "type-check": "tsc --noEmit",
-    "migrate-telegram-username": "tsx src/scripts/migrate-telegram-username.ts"
+    "migrate-telegram-username": "tsx src/scripts/migrate-telegram-username.ts",
+    "check-products": "tsx src/scripts/check-products.ts",
+    "activate-products": "tsx src/scripts/activate-products.ts"
   },
   "keywords": [],
   "author": "",
@@ -28,6 +32,7 @@
     "express": "^5.1.0",
     "mongoose": "^8.15.1",
     "node-cron": "^4.0.7",
+    "node-telegram-bot-api": "^0.66.0",
     "nodemailer": "^7.0.3",
     "ts-node-dev": "^2.0.0"
   },
@@ -35,6 +40,7 @@
     "@types/cors": "^2.8.18",
     "@types/express": "^5.0.2",
     "@types/node": "^22.15.27",
+    "@types/node-telegram-bot-api": "^0.64.9",
     "@types/nodemailer": "^6.4.17",
     "tsconfig-paths": "^4.2.0",
     "tsup": "^8.5.0",

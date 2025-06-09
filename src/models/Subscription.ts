@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, { Schema, Document, Model } from 'mongoose';
 
 export interface ISubscription extends Document {
   email: string;
@@ -8,6 +8,10 @@ export interface ISubscription extends Document {
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
+}
+
+interface ISubscriptionModel extends Model<ISubscription> {
+  getUserEmail(telegramUsername: string): Promise<string | null>;
 }
 
 const subscriptionSchema = new Schema<ISubscription>({
@@ -43,4 +47,13 @@ const subscriptionSchema = new Schema<ISubscription>({
 subscriptionSchema.index({ email: 1, productId: 1 }, { unique: true });
 subscriptionSchema.index({ productId: 1, isActive: 1 });
 
-export const Subscription = mongoose.model<ISubscription>('Subscription', subscriptionSchema);
+// Add method to get user email
+subscriptionSchema.statics.getUserEmail = async function(telegramUsername: string): Promise<string | null> {
+  const subscription = await this.findOne({ 
+    telegramUsername, 
+    isActive: true 
+  }).sort({ createdAt: -1 });
+  return subscription?.email || null;
+};
+
+export const Subscription = mongoose.model<ISubscription, ISubscriptionModel>('Subscription', subscriptionSchema);

@@ -34,14 +34,33 @@ interface TelegramUpdate {
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN || '', { polling: true });
 
-// Store user email addresses temporarily
-const userEmails = new Map<number, string>();
-// Store pending subscriptions
-const pendingSubscriptions = new Map<number, string>();
+// Store user email addresses temporarily during email setting process
+const pendingEmails = new Map<number, string>();
 
 // Command handlers
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
+  const username = msg.from?.username;
+  
+  if (username) {
+    // Check if user already has an email in database
+    const existingEmail = await Subscription.getUserEmail(username);
+    if (existingEmail) {
+      await bot.sendMessage(chatId, 
+        '👋 Welcome back to Amul Product Notifier!\n\n' +
+        'Your email is already set: ' + existingEmail + '\n\n' +
+        'Available commands:\n' +
+        '/setemail - Change your email\n' +
+        '/products - Browse and subscribe to products\n' +
+        '/mysubscriptions - View your subscriptions\n' +
+        '/unsubscribeall - Unsubscribe from all products\n' +
+        '/help - Show this help message\n\n' +
+        '📧 For any support, contact: thakkarnisarg@gmail.com'
+      );
+      return;
+    }
+  }
+
   await bot.sendMessage(chatId, 
     '👋 Welcome to Amul Product Notifier!\n\n' +
     'Available commands:\n' +
@@ -49,9 +68,19 @@ bot.onText(/\/start/, async (msg) => {
     '/products - Browse and subscribe to products\n' +
     '/mysubscriptions - View your subscriptions\n' +
     '/unsubscribeall - Unsubscribe from all products\n' +
-    '/help - Show this help message'
+    '/help - Show this help message\n\n' +
+    '📧 For any support, contact: thakkarnisarg@gmail.com'
   );
 });
+
+// Helper function to get user email
+async function getUserEmail(chatId: number, username?: string): Promise<string | null> {
+  if (username) {
+    const email = await Subscription.getUserEmail(username);
+    if (email) return email;
+  }
+  return pendingEmails.get(chatId) || null;
+}
 
 bot.onText(/\/help/, async (msg) => {
   const chatId = msg.chat.id;
@@ -61,19 +90,21 @@ bot.onText(/\/help/, async (msg) => {
     '/products - Browse and subscribe to products\n' +
     '/mysubscriptions - View your subscriptions\n' +
     '/unsubscribeall - Unsubscribe from all products\n' +
-    '/help - Show this help message'
+    '/help - Show this help message\n\n' +
+    '📧 For any support, contact: thakkarnisarg@gmail.com'
   );
 });
 
 bot.onText(/\/setemail/, async (msg) => {
   const chatId = msg.chat.id;
   await bot.sendMessage(chatId, 'Please enter your email address:');
-  userEmails.set(chatId, 'waiting');
+  pendingEmails.set(chatId, 'waiting');
 });
 
 bot.onText(/\/products/, async (msg) => {
   const chatId = msg.chat.id;
-  const email = userEmails.get(chatId);
+  const username = msg.from?.username;
+  const email = await getUserEmail(chatId, username);
 
   if (!email || email === 'waiting') {
     await bot.sendMessage(chatId, '❌ Please set your email first using /setemail');
@@ -113,21 +144,22 @@ bot.onText(/\/products/, async (msg) => {
 // Handle callback queries (button clicks)
 bot.on('callback_query', async (callbackQuery) => {
   const chatId = callbackQuery.message?.chat.id;
+  const username = callbackQuery.from.username;
   const data = callbackQuery.data;
   
   if (!chatId || !data) return;
 
+  const email = await getUserEmail(chatId, username);
+  if (!email || email === 'waiting') {
+    await bot.answerCallbackQuery(callbackQuery.id, {
+      text: '❌ Please set your email first using /setemail',
+      show_alert: true
+    });
+    return;
+  }
+
   if (data.startsWith('product_')) {
     const productId = data.replace('product_', '');
-    const email = userEmails.get(chatId);
-
-    if (!email || email === 'waiting') {
-      await bot.answerCallbackQuery(callbackQuery.id, {
-        text: '❌ Please set your email first using /setemail',
-        show_alert: true
-      });
-      return;
-    }
 
     try {
       const product = await Product.findOne({ productId });
@@ -205,7 +237,6 @@ bot.on('callback_query', async (callbackQuery) => {
     }
   } else if (data.startsWith('subscribe_')) {
     const productId = data.replace('subscribe_', '');
-    const email = userEmails.get(chatId);
 
     try {
       const product = await Product.findOne({ productId });
@@ -234,7 +265,7 @@ bot.on('callback_query', async (callbackQuery) => {
       await Subscription.create({
         email,
         productId,
-        telegramUsername: callbackQuery.from.username,
+        telegramUsername: username,
         isActive: true
       });
 
@@ -275,15 +306,6 @@ bot.on('callback_query', async (callbackQuery) => {
     }
   } else if (data.startsWith('unsubscribe_')) {
     const productId = data.replace('unsubscribe_', '');
-    const email = userEmails.get(chatId);
-
-    if (!email || email === 'waiting') {
-      await bot.answerCallbackQuery(callbackQuery.id, {
-        text: '❌ Please set your email first using /setemail',
-        show_alert: true
-      });
-      return;
-    }
 
     try {
       const product = await Product.findOne({ productId });
@@ -360,16 +382,6 @@ bot.on('callback_query', async (callbackQuery) => {
       });
     }
   } else if (data === 'unsubscribe_all') {
-    const email = userEmails.get(chatId);
-
-    if (!email || email === 'waiting') {
-      await bot.answerCallbackQuery(callbackQuery.id, {
-        text: '❌ Please set your email first using /setemail',
-        show_alert: true
-      });
-      return;
-    }
-
     try {
       const result = await Subscription.updateMany(
         { email, isActive: true },
@@ -412,7 +424,8 @@ bot.on('callback_query', async (callbackQuery) => {
 
 bot.onText(/\/mysubscriptions/, async (msg) => {
   const chatId = msg.chat.id;
-  const email = userEmails.get(chatId);
+  const username = msg.from?.username;
+  const email = await getUserEmail(chatId, username);
 
   if (!email || email === 'waiting') {
     await bot.sendMessage(chatId, '❌ Please set your email first using /setemail');
@@ -484,7 +497,8 @@ bot.onText(/\/mysubscriptions/, async (msg) => {
 bot.onText(/\/unsubscribe (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const productId = match?.[1];
-  const email = userEmails.get(chatId);
+  const username = msg.from?.username;
+  const email = await getUserEmail(chatId, username);
 
   if (!email || email === 'waiting') {
     await bot.sendMessage(chatId, '❌ Please set your email first using /setemail');
@@ -519,7 +533,8 @@ bot.onText(/\/unsubscribe (.+)/, async (msg, match) => {
 
 bot.onText(/\/unsubscribeall/, async (msg) => {
   const chatId = msg.chat.id;
-  const email = userEmails.get(chatId);
+  const username = msg.from?.username;
+  const email = await getUserEmail(chatId, username);
 
   if (!email || email === 'waiting') {
     await bot.sendMessage(chatId, '❌ Please set your email first using /setemail');
@@ -549,9 +564,10 @@ bot.onText(/\/unsubscribeall/, async (msg) => {
 // Handle email input
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
-  const email = userEmails.get(chatId);
+  const username = msg.from?.username;
+  const pendingEmail = pendingEmails.get(chatId);
 
-  if (email === 'waiting') {
+  if (pendingEmail === 'waiting') {
     const newEmail = msg.text;
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -560,10 +576,18 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    userEmails.set(chatId, newEmail || '');
+    if (username) {
+      // Update all existing subscriptions with the new email
+      await Subscription.updateMany(
+        { telegramUsername: username },
+        { $set: { email: newEmail } }
+      );
+    }
+
+    pendingEmails.set(chatId, newEmail || '');
     await bot.sendMessage(chatId, 
       `✅ Email set successfully: ${newEmail}\n` +
-      'You can now use /products to view available products and subscribe to them.'
+      'You can now use /products to view available products and /mysubscriptions to view your subscriptions.'
     );
   }
 });

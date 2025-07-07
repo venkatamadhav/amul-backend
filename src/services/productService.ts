@@ -19,8 +19,8 @@ export const fetchAndUpdateProducts = async (): Promise<void> => {
       const existingProduct = await Product.findOne({ productId: productData._id });
       
       if (existingProduct) {
-        const wasOutOfStock = existingProduct.inventoryQuantity === 0;
-        const nowInStock = productData.inventory_quantity > 0;
+        const wasOutOfStock = existingProduct.inventoryQuantity < productData.inventory_low_stock_quantity;
+        const nowInStock = (productData.inventory_quantity > 0 && productData.inventory_quantity>productData.inventory_low_stock_quantity);
         
         if (wasOutOfStock && nowInStock) {
           console.log(`📦 Product ${productData.name} is back in stock!`);

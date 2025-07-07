@@ -33,7 +33,7 @@ export const fetchAndUpdateProducts = async (): Promise<void> => {
           {
             inventoryQuantity: productData.inventory_quantity,
             lastChecked: new Date(),
-            wasOutOfStock: productData.inventory_quantity === 0,
+            wasOutOfStock: productData.inventory_quantity<productData.inventory_low_stock_quantity,
             price: productData.price,
             name: productData.name,
             isActive: true
@@ -50,7 +50,7 @@ export const fetchAndUpdateProducts = async (): Promise<void> => {
           image: productData.images && productData.images.length > 0 ? 
                 `https://shop.amul.com/s/62fa94df8c13af2e242eba16/${productData.images[0].image}` : undefined,
           brand: productData.brand,
-          wasOutOfStock: productData.inventory_quantity === 0,
+          wasOutOfStock: productData.inventory_quantity<productData.inventory_low_stock_quantity,
           isActive: true
         });
         await newProduct.save();
